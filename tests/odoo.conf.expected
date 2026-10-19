@@ -1,0 +1,22 @@
+[options]
+data_dir = /var/lib/odoo
+http_interface = 0.0.0.0
+smtp_server = localhost
+smtp_port = 1025
+addons_path = /mnt/extra-addons,/mnt/vendor
+dbfilter = ^odoo$
+limit_memory_hard = 2684354560
+limit_memory_soft = 2147483648
+limit_time_cpu = 600
+limit_time_real = 1200
+list_db = False
+proxy_mode = True
+server_wide_modules = base,web,queue_job
+workers = 0
+
+[queue_job]
+channels = root:2,root.channel1:1
+
+[z_module]
+enabled = True
+ratio = 0.5

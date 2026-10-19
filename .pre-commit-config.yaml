@@ -1,0 +1,35 @@
+# Quality checks, run on commit (pre-commit install) and in CI (same configuration).
+# Run by hand: pre-commit run --all-files
+# Helm templates are not valid YAML before rendering: ci/lint.sh checks them.
+exclude: ^charts/odoo/templates/
+default_language_version:
+  node: system
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-yaml
+        # Kubernetes manifests hold several documents
+        args: [--allow-multiple-documents]
+      - id: check-json
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier (yaml, json, md)
+        entry: prettier --write --ignore-unknown
+        language: node
+        types_or: [yaml, json, markdown]
+        additional_dependencies: ["prettier@3.9.10"]

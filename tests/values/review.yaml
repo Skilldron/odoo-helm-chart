@@ -1,0 +1,29 @@
+# Test values: review app (ephemeral), threaded Odoo, Mailpit.
+environment: review
+ephemeral: true
+
+odoo:
+  modules: [sale_management]
+  config:
+    options:
+      workers: 0
+      max_cron_threads: 1
+  persistence:
+    size: 1Gi
+  resources:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {memory: 2Gi}
+
+mailpit:
+  enabled: true
+
+route:
+  parentRefs:
+    - {name: gateway, namespace: gateway-system}
+  reviewDomain: review.example.com
+
+networkPolicy:
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: gateway-system

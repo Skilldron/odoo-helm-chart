@@ -1,0 +1,76 @@
+{{- /*
+Job validate, persistent instances, post-upgrade, once Helm has applied the
+Deployments (and waited for them with --wait):
+  1. the complete pending restore point becomes validated; a failure here fails the hook;
+  2. the incomplete pending points (snapshot failed or not ready) are deleted;
+  3. retention: beyond the restorePoints.keep newest validated and restored points, the
+     oldest are deleted (their snapshots go with their Backup).
+Steps 2 and 3 never fail the hook: an error is logged, the update succeeded, the purge
+resumes at the next one.
+*/ -}}
+{{- if include "odoo.restorePoints" . }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-validate
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: validate
+  annotations:
+    {{- include "odoo.hook" (list "post-upgrade" 0) | nindent 4 }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "odoo.labels" . | nindent 8 }}
+        app.kubernetes.io/component: validate
+    spec:
+      {{- include "odoo.podCommon" (list . (printf "%s-hooks" .Release.Name)) | nindent 6 }}
+      restartPolicy: Never
+      containers:
+        - name: validate
+          {{- include "odoo.kubectlContainer" . | nindent 10 }}
+          env:
+            {{- include "odoo.kubectlEnv" . | nindent 12 }}
+            - {name: KEEP, value: {{ .Values.restorePoints.keep | quote }}}
+          args:
+            - |
+              {{- include "odoo.pointFunctions" . | nindent 14 }}
+              points pending >/tmp/pending
+              : >/tmp/incomplete
+              while read -r name phase fs; do
+                [ -n "$name" ] || continue
+                if complete "$phase" "$fs"; then
+                  kubectl label backups.postgresql.cnpg.io "$name" "$P/upgrade-state=validated" --overwrite
+                else
+                  echo "$name" >>/tmp/incomplete
+                fi
+              done </tmp/pending
+              set +e
+              while read -r name; do
+                [ -n "$name" ] || continue
+                echo "Incomplete restore point $name: deleted"
+                kubectl delete backups.postgresql.cnpg.io "$name" ||
+                  echo "WARNING: could not delete the incomplete restore point $name" >&2
+              done </tmp/incomplete
+              if points validated,restored >/tmp/kept; then
+                total="$(grep -c . /tmp/kept)"
+                echo "$total validated or restored restore point(s), $KEEP kept"
+                if [ "$total" -gt "$KEEP" ]; then
+                  head -n "$((total - KEEP))" /tmp/kept | while read -r name _; do
+                    echo "Retention: restore point $name deleted"
+                    kubectl delete backups.postgresql.cnpg.io "$name" ||
+                      echo "WARNING: could not delete the restore point $name (retention)" >&2
+                  done
+                fi
+              else
+                echo "WARNING: could not list the restore points (retention)" >&2
+              fi
+              exit 0
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- include "odoo.kubeApiAccess" . | nindent 8 }}
+{{- end }}

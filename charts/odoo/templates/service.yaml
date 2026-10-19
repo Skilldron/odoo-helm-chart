@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: odoo
+spec:
+  selector:
+    {{- include "odoo.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: odoo
+  ports:
+    - {name: http, port: 8069, targetPort: http}
+    {{- if gt (include "odoo.workers" . | int) 0 }}
+    - {name: websocket, port: 8072, targetPort: websocket, appProtocol: kubernetes.io/ws}
+    {{- end }}
+    {{- if .Values.mailpit.enabled }}
+    - {name: mailpit, port: 8025, targetPort: mailpit}
+    {{- end }}

@@ -1,0 +1,54 @@
+{{- /*
+Odoo (and Mailpit) reachable from networkPolicy.ingressFrom (the Gateway) only; the ephemeral
+database reachable from the pods of the release only. Egress stays open: Odoo reaches its
+external database, SMTP and APIs. An external database is protected by its own policy.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: odoo
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {port: 8069}
+        {{- if gt (include "odoo.workers" . | int) 0 }}
+        - {port: 8072}
+        {{- end }}
+        {{- if .Values.mailpit.enabled }}
+        - {port: 8025}
+        {{- end }}
+      {{- with .Values.networkPolicy.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if .Values.ephemeral }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-database
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {port: 5432}
+      from:
+        - podSelector:
+            matchLabels:
+              {{- include "odoo.selectorLabels" . | nindent 14 }}
+{{- end }}
+{{- end }}

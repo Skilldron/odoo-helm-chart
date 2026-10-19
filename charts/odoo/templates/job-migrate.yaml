@@ -1,0 +1,131 @@
+{{- /*
+Job migrate: native commands of Odoo and click-odoo-contrib in successive
+containers (db-init, neutralize when asked, install, update). Hook of the chart:
+  - persistent instance, update: pre-upgrade, after stop-snapshot (Odoo stopped, restore
+    point taken), before Helm applies the Deployments;
+  - persistent instance, first installation, and ephemeral instance: post-install (and
+    post-upgrade when ephemeral), once Helm has created the filestore volume and the
+    ephemeral database; the Odoo pods wait for it (init container wait-db).
+db-init only creates Odoo's database when it does not exist: odoo db init refuses an
+existing one anyway.
+*/ -}}
+{{- $modules := .Values.odoo.modules | default (list "base") }}
+{{- $ephemeral := include "odoo.ephemeral" . }}
+{{- $post := or $ephemeral .Release.IsInstall }}
+{{- $p := .Values.odoo.persistence }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrate
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    {{- if $ephemeral }}
+    {{- include "odoo.hook" (list "post-install,post-upgrade" 0) | nindent 4 }}
+    {{- else if .Release.IsInstall }}
+    {{- include "odoo.hook" (list "post-install" 0) | nindent 4 }}
+    {{- else }}
+    {{- include "odoo.hook" (list "pre-upgrade" 0) | nindent 4 }}
+    {{- end }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.jobs.migrate.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "odoo.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      {{- include "odoo.podCommon" . | nindent 6 }}
+      restartPolicy: Never
+      {{- if and $post $p.enabled (eq $p.accessMode "ReadWriteOnce") }}
+      # The Odoo pod, waiting for the database, mounts the same RWO volume: same node
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  {{- include "odoo.selectorLabels" . | nindent 18 }}
+                  app.kubernetes.io/component: odoo
+                  {{ .Values.labelPrefix }}/digest: {{ include "odoo.shortDigest" . | quote }}
+      {{- end }}
+      initContainers:
+        - name: db-init
+          image: {{ include "odoo.image" . }}
+          command: [sh, -euc]
+          args:
+            - |
+              deadline=$(($(date +%s) + 300))
+              until psql -d postgres -tAc 'select 1' >/dev/null 2>&1; do
+                [ "$(date +%s)" -lt "$deadline" ] || { echo "database server unreachable" >&2; exit 1; }
+                sleep 2
+              done
+              if psql -d postgres -tAc "select 1 from pg_database where datname = '$PGDATABASE'" | grep -q 1; then
+                echo "database $PGDATABASE exists"
+                exit 0
+              fi
+              {{- if $ephemeral }}
+              exec odoo db init --with-demo --password "$ODOO_REVIEW_ADMIN_PASSWORD" "$PGDATABASE"
+              {{- else }}
+              [ -n "${ODOO_INIT_ADMIN_PASSWORD:-}" ] || { echo "no admin-user-password in {{ include "odoo.appSecret" . }}: needed to create the database" >&2; exit 1; }
+              exec odoo db init --password "$ODOO_INIT_ADMIN_PASSWORD" "$PGDATABASE"
+              {{- end }}
+          env:
+            {{- include "odoo.env" . | nindent 12 }}
+            - {name: HOME, value: /tmp}
+            {{- if $ephemeral }}
+            - name: ODOO_REVIEW_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ include "odoo.generatedSecret" . }}, key: review-admin-password}
+            {{- else }}
+            - name: ODOO_INIT_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ include "odoo.appSecret" . }}, key: admin-user-password, optional: true}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.odoo.resources | nindent 12 }}
+          securityContext:
+            {{- include "odoo.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            {{- include "odoo.volumeMounts" . | nindent 12 }}
+        {{- if .Values.neutralize }}
+        # Copy of another instance's data (refresh): neutralized before Odoo starts
+        - name: neutralize
+          image: {{ include "odoo.image" . }}
+          args: [odoo, neutralize, -d, {{ .Values.database.name | quote }}]
+          env:
+            {{- include "odoo.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.odoo.resources | nindent 12 }}
+          securityContext:
+            {{- include "odoo.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            {{- include "odoo.volumeMounts" . | nindent 12 }}
+        {{- end }}
+        - name: install
+          image: {{ include "odoo.image" . }}
+          args: [odoo, -i, {{ join "," $modules }}, --stop-after-init, --no-http]
+          env:
+            {{- include "odoo.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.odoo.resources | nindent 12 }}
+          securityContext:
+            {{- include "odoo.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            {{- include "odoo.volumeMounts" . | nindent 12 }}
+      containers:
+        - name: update
+          image: {{ include "odoo.image" . }}
+          args: [click-odoo-update]
+          env:
+            {{- include "odoo.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.odoo.resources | nindent 12 }}
+          securityContext:
+            {{- include "odoo.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            {{- include "odoo.volumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "odoo.volumesWith" (list . (include "odoo.hookConfig" .)) | nindent 8 }}

@@ -1,0 +1,170 @@
+{{- /*
+Job stop-snapshot, persistent instances, pre-upgrade before migrate:
+  1. stop (kubectl): refuses an orphan restore point; Odoo at 0; active CNPG cluster read
+     in the selector of the stable Service; nothing to take while a complete pending
+     point exists (retry after a failure);
+  2. restore-point (Odoo image, psql): restore point named after the Backup in the WAL,
+     in the database postgres (GRANT required by README.md), before the snapshot fences the primary;
+  3. snapshot (kubectl): cold CNPG Backup labelled pending, filestore VolumeSnapshot owned
+     by the Backup (no blockOwnerDeletion), both ready, then the primary ready again.
+*/ -}}
+{{- if and (include "odoo.restorePoints" .) (not .Release.IsInstall) }}
+{{- $escaped := .Values.labelPrefix | replace "." "\\." }}
+{{- $p := .Values.odoo.persistence }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-stop-snapshot
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: stop-snapshot
+  annotations:
+    {{- include "odoo.hook" (list "pre-upgrade" -5) | nindent 4 }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ add (mul 2 .Values.restorePoints.timeoutSeconds) 900 }}
+  template:
+    metadata:
+      labels:
+        {{- include "odoo.labels" . | nindent 8 }}
+        app.kubernetes.io/component: stop-snapshot
+    spec:
+      {{- include "odoo.podCommon" (list . (printf "%s-hooks" .Release.Name)) | nindent 6 }}
+      restartPolicy: Never
+      initContainers:
+        - name: stop
+          {{- include "odoo.kubectlContainer" . | nindent 10 }}
+          env:
+            {{- include "odoo.kubectlEnv" . | nindent 12 }}
+            - {name: SVC, value: {{ include "odoo.dbService" . | quote }}}
+          args:
+            - |
+              {{- include "odoo.pointFunctions" . | nindent 14 }}
+              sel="app.kubernetes.io/instance=$REL,app.kubernetes.io/component=odoo"
+              existing=""
+              points pending >/tmp/pending
+              while read -r name phase fs; do
+                [ -n "$name" ] || continue
+                if complete "$phase" "$fs"; then existing="$name"; fi
+              done </tmp/pending
+              if [ -n "$existing" ]; then
+                target="$(kubectl get backups.postgresql.cnpg.io "$existing" -o jsonpath='{.metadata.annotations.{{ $escaped }}/target-image}')"
+                if kubectl get deployments -l "$sel" -o jsonpath='{range .items[*]}{.spec.template.spec.containers[0].image}{" "}{.status.availableReplicas}{"\n"}{end}' |
+                  awk -v t="$target" '$1 == t && $2 > 0 {f = 1} END {exit !f}'; then
+                  echo "Restore point $existing is still pending while Odoo serves the image it was taken for ($target): that update succeeded, its validation failed. Check, then: kubectl label backups.postgresql.cnpg.io $existing $P/upgrade-state=validated --overwrite" >&2
+                  exit 1
+                fi
+              fi
+              if [ -n "$(kubectl get deployments -l "$sel" -o name)" ]; then
+                kubectl scale deployment -l "$sel" --replicas=0
+                kubectl wait pod -l "$sel" --for=delete --timeout=600s
+              fi
+              echo "Odoo stopped"
+              cluster="$(kubectl get service "$SVC" -o jsonpath='{.spec.selector.cnpg\.io/cluster}')"
+              [ -n "$cluster" ] || { echo "Service $SVC has no selector cnpg.io/cluster" >&2; exit 1; }
+              if [ -n "$existing" ]; then
+                echo "Restore point $existing still pending (previous attempt): no new restore point"
+              else
+                echo "$cluster" >/tmp/cluster
+                echo "$cluster-preupgrade-r{{ .Release.Revision }}" >/tmp/name
+              fi
+        - name: restore-point
+          image: {{ include "odoo.image" . }}
+          command: [sh, -euc]
+          args:
+            - |
+              [ -f /tmp/name ] || exit 0
+              psql -d postgres -v ON_ERROR_STOP=1 -tAc "select pg_create_restore_point('$(cat /tmp/name)')"
+              echo "WAL restore point $(cat /tmp/name)"
+          env:
+            {{- include "odoo.env" . | nindent 12 }}
+            - {name: HOME, value: /tmp}
+          resources:
+            {{- toYaml .Values.restorePoints.resources | nindent 12 }}
+          securityContext:
+            {{- include "odoo.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: snapshot
+          {{- include "odoo.kubectlContainer" . | nindent 10 }}
+          env:
+            {{- include "odoo.kubectlEnv" . | nindent 12 }}
+            - {name: IMAGE, value: {{ include "odoo.image" . | quote }}}
+            - {name: TRIES, value: {{ div .Values.restorePoints.timeoutSeconds 5 | quote }}}
+          args:
+            - |
+              [ -f /tmp/name ] || exit 0
+              name="$(cat /tmp/name)"
+              cluster="$(cat /tmp/cluster)"
+              {{- if $p.enabled }}
+              fs="$name-filestore"
+              {{- end }}
+              kubectl create -f - <<YAML
+              apiVersion: postgresql.cnpg.io/v1
+              kind: Backup
+              metadata:
+                name: $name
+                labels:
+                  app.kubernetes.io/instance: $REL
+                  $P/backup-type: pre-upgrade
+                  $P/upgrade-state: pending
+                annotations:
+                  $P/target-image: "$IMAGE"
+                  {{- if $p.enabled }}
+                  $P/filestore: "$fs"
+                  {{- end }}
+              spec:
+                cluster: {name: $cluster}
+                method: volumeSnapshot
+                online: false
+              YAML
+              {{- if $p.enabled }}
+              uid="$(kubectl get backups.postgresql.cnpg.io "$name" -o jsonpath='{.metadata.uid}')"
+              kubectl create -f - <<YAML
+              apiVersion: snapshot.storage.k8s.io/v1
+              kind: VolumeSnapshot
+              metadata:
+                name: $fs
+                labels:
+                  app.kubernetes.io/instance: $REL
+                  $P/backup-type: pre-upgrade
+                ownerReferences:
+                  - apiVersion: postgresql.cnpg.io/v1
+                    kind: Backup
+                    name: $name
+                    uid: $uid
+              spec:
+                volumeSnapshotClassName: {{ .Values.restorePoints.volumeSnapshotClass }}
+                source:
+                  persistentVolumeClaimName: {{ include "odoo.dataClaim" . }}
+              YAML
+              {{- end }}
+              i=0
+              while :; do
+                phase="$(kubectl get backups.postgresql.cnpg.io "$name" -o jsonpath='{.status.phase}')"
+                case "$phase" in
+                completed) break ;;
+                failed)
+                  echo "Backup $name failed: $(kubectl get backups.postgresql.cnpg.io "$name" -o jsonpath='{.status.error}')" >&2
+                  exit 1
+                  ;;
+                esac
+                i=$((i + 1))
+                [ "$i" -lt "$TRIES" ] || { echo "Backup $name not completed in time (phase: $phase)" >&2; exit 1; }
+                sleep 5
+              done
+              echo "Backup $name completed"
+              {{- if $p.enabled }}
+              kubectl wait volumesnapshots.snapshot.storage.k8s.io "$fs" \
+                --for=jsonpath='{.status.readyToUse}'=true --timeout={{ .Values.restorePoints.timeoutSeconds }}s
+              {{- end }}
+              kubectl wait "clusters.postgresql.cnpg.io/$cluster" --for=condition=Ready --timeout=600s
+              kubectl wait pod -l "cnpg.io/cluster=$cluster,cnpg.io/instanceRole=primary" \
+                --for=condition=Ready --timeout=600s
+              echo "Restore point $name complete"
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- include "odoo.kubeApiAccess" . | nindent 8 }}
+{{- end }}

@@ -1,0 +1,20 @@
+# ci/lint.sh: the odoo.conf rendered from these values must equal odoo.conf.expected
+# (sections, lists, booleans, large integers, decimals, option removed with null, options
+# imposed by the chart).
+environment: review
+ephemeral: true
+mailpit:
+  enabled: true
+odoo:
+  config:
+    options:
+      addons_path: [/mnt/extra-addons, /mnt/vendor]
+      workers: 0
+      max_cron_threads: null
+      server_wide_modules: [base, web, queue_job]
+      dbfilter: ^odoo$
+    queue_job:
+      channels: [root:2, root.channel1:1]
+    z_module:
+      ratio: 0.5
+      enabled: true

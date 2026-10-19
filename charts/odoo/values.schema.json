@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["image", "odoo", "database"],
+  "definitions": {
+    "iniScalar": {
+      "anyOf": [
+        {"type": "string", "pattern": "^[^\\n\\r]*$"},
+        {"type": "number"},
+        {"type": "boolean"},
+        {"type": "null"}
+      ]
+    },
+    "iniSection": {
+      "type": ["object", "null"],
+      "propertyNames": {
+        "pattern": "^[a-z0-9_.]+$",
+        "not": {"pattern": "passw|secret|token"}
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {"$ref": "#/definitions/iniScalar"},
+          {"type": "array", "items": {"$ref": "#/definitions/iniScalar"}}
+        ]
+      }
+    }
+  },
+  "properties": {
+    "environment": {"type": "string", "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"},
+    "ephemeral": {"type": "boolean"},
+    "neutralize": {"type": "boolean"},
+    "project": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "labelPrefix": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$"
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository", "digest"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "pullSecrets": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runAsUser": {"type": ["integer", "null"], "minimum": 1},
+        "runAsGroup": {"type": ["integer", "null"], "minimum": 0},
+        "fsGroup": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "odoo": {
+      "type": "object",
+      "properties": {
+        "replicas": {"type": "integer", "minimum": 0},
+        "modules": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z0-9_]+$"}
+        },
+        "config": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[a-z0-9_.]+$"},
+          "additionalProperties": {"$ref": "#/definitions/iniSection"}
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "accessMode": {"enum": ["ReadWriteOnce", "ReadWriteMany"]},
+            "storageClass": {"type": "string"},
+            "size": {"type": "string"},
+            "existingClaim": {"type": "string"}
+          }
+        }
+      }
+    },
+    "jobs": {
+      "type": "object",
+      "properties": {
+        "migrate": {
+          "type": "object",
+          "properties": {
+            "activeDeadlineSeconds": {"type": "integer", "minimum": 60}
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "existingSecret": {"type": "string"},
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "secret", "key"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$"},
+              "secret": {"type": "string", "minLength": 1},
+              "key": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]+$"},
+        "external": {
+          "type": "object",
+          "properties": {
+            "host": {"type": "string"},
+            "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+            "secret": {"type": "string"}
+          }
+        }
+      }
+    },
+    "restorePoints": {
+      "type": "object",
+      "properties": {
+        "keep": {"type": "integer", "minimum": 1},
+        "volumeSnapshotClass": {"type": "string"},
+        "timeoutSeconds": {"type": "integer", "minimum": 60},
+        "image": {"type": "string", "minLength": 1}
+      }
+    },
+    "mailpit": {
+      "type": "object",
+      "properties": {"enabled": {"type": "boolean"}}
+    },
+    "route": {
+      "type": "object",
+      "properties": {
+        "parentRefs": {"type": "array"},
+        "host": {"type": "string"},
+        "mailpitHost": {"type": "string"},
+        "reviewDomain": {"type": "string"}
+      }
+    }
+  },
+  "if": {"properties": {"ephemeral": {"const": true}}, "required": ["ephemeral"]},
+  "else": {
+    "properties": {
+      "secrets": {
+        "required": ["existingSecret"],
+        "properties": {"existingSecret": {"minLength": 1}}
+      }
+    }
+  }
+}

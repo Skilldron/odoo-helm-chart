@@ -1,0 +1,2 @@
+# Helm templates: the {{ }} are not valid YAML before rendering.
+charts/odoo/templates/

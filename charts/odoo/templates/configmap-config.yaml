@@ -1,0 +1,27 @@
+{{- include "odoo.validate" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+data:
+  odoo.conf: |
+    {{- include "odoo.conf" . | nindent 4 }}
+---
+{{- /*
+Same odoo.conf for the hook Jobs, rendered by the same helper: the pre-upgrade Jobs run
+before Helm applies the ConfigMap above, and must read the configuration of the new
+revision.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "odoo.hookConfig" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+  annotations:
+    {{- include "odoo.hook" (list "pre-install,pre-upgrade" -10) | nindent 4 }}
+data:
+  odoo.conf: |
+    {{- include "odoo.conf" . | nindent 4 }}

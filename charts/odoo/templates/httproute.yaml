@@ -1,0 +1,39 @@
+{{- if .Values.route.parentRefs }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.route.parentRefs | nindent 4 }}
+  hostnames: [{{ include "odoo.host" . | quote }}]
+  rules:
+    {{- if gt (include "odoo.workers" . | int) 0 }}
+    - matches:
+        - path: {type: PathPrefix, value: /websocket}
+      backendRefs:
+        - {name: {{ .Release.Name }}, port: 8072}
+    {{- end }}
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      backendRefs:
+        - {name: {{ .Release.Name }}, port: 8069}
+{{- if and .Values.mailpit.enabled (include "odoo.mailpitHost" .) }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-mailpit
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.route.parentRefs | nindent 4 }}
+  hostnames: [{{ include "odoo.mailpitHost" . | quote }}]
+  rules:
+    - backendRefs:
+        - {name: {{ .Release.Name }}, port: 8025}
+{{- end }}
+{{- end }}

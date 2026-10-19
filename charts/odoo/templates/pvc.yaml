@@ -1,0 +1,27 @@
+{{- /*
+Filestore and sessions (/var/lib/odoo). Ephemeral instance: named after the digest, a new
+image gets a new volume and Helm deletes the old one. Persistent instance: kept by Helm; a
+restored filestore is used through odoo.persistence.existingClaim instead.
+*/ -}}
+{{- $p := .Values.odoo.persistence }}
+{{- if and $p.enabled (not $p.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "odoo.dataClaim" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: odoo
+  {{- if not (include "odoo.ephemeral" .) }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  accessModes: [{{ $p.accessMode }}]
+  {{- with $p.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $p.size }}
+{{- end }}

@@ -1,0 +1,50 @@
+{{- /*
+Account of the stop-snapshot and validate Jobs, persistent instances only.
+Recreated at each update (hook, before-hook-creation): it only exists for the hooks, and
+has only the verbs they need. No delete on volumesnapshots: they go with their Backup. No
+access to Secrets.
+*/ -}}
+{{- if include "odoo.restorePoints" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-hooks
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+  annotations:
+    {{- include "odoo.hook" (list "pre-install,pre-upgrade" -10) | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-hooks
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+  annotations:
+    {{- include "odoo.hook" (list "pre-install,pre-upgrade" -10) | nindent 4 }}
+rules:
+  - {apiGroups: [apps], resources: [deployments], verbs: [get, list]}
+  - {apiGroups: [apps], resources: [deployments/scale], verbs: [get, patch]}
+  - {apiGroups: [""], resources: [pods], verbs: [get, list, watch]}
+  - {apiGroups: [""], resources: [services], verbs: [get]}
+  - {apiGroups: [postgresql.cnpg.io], resources: [clusters], verbs: [get, list, watch]}
+  - {apiGroups: [postgresql.cnpg.io], resources: [backups], verbs: [create, get, list, watch, patch, delete]}
+  - {apiGroups: [snapshot.storage.k8s.io], resources: [volumesnapshots], verbs: [create, get, list, watch]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-hooks
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+  annotations:
+    {{- include "odoo.hook" (list "pre-install,pre-upgrade" -10) | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-hooks
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-hooks
+{{- end }}

@@ -1,0 +1,98 @@
+{{- /*
+PostgreSQL of an ephemeral instance. Its volume carries the digest: a new image starts
+an empty server, where odoo db init creates the database. POSTGRES_DB=postgres, otherwise
+the image would create Odoo's database and db init would refuse it.
+*/ -}}
+{{- if .Values.ephemeral }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "odoo.pgdataClaim" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.database.ephemeral.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.database.ephemeral.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-postgres
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "odoo.labels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: {{ .Values.database.ephemeral.image }}
+          env:
+            - {name: POSTGRES_USER, value: odoo}
+            - {name: POSTGRES_DB, value: postgres}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ include "odoo.generatedSecret" . }}, key: pg-password}
+          ports:
+            - {name: postgres, containerPort: 5432}
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, odoo, -d, postgres]
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.database.ephemeral.resources | nindent 12 }}
+          securityContext:
+            {{- include "odoo.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql}
+            - {name: run, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: {{ include "odoo.pgdataClaim" . }}}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-postgres
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  selector:
+    {{- include "odoo.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+  ports:
+    - {name: postgres, port: 5432, targetPort: postgres}
+{{- end }}

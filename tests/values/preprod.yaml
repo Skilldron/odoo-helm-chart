@@ -1,0 +1,40 @@
+# Test values: persistent preproduction instance on an external CNPG database.
+environment: preprod
+
+odoo:
+  modules: [sale_management]
+  config:
+    options:
+      workers: 2
+      max_cron_threads: 1
+  persistence:
+    size: 5Gi
+
+secrets:
+  existingSecret: odoo-app
+
+database:
+  external:
+    # Stable Service odoo-db and the Secret of the declared role odoo
+    host: odoo-db
+    port: 5432
+    secret: odoo-db-credentials
+
+restorePoints:
+  # deletionPolicy: Delete
+  volumeSnapshotClass: csi-snapclass
+
+mailpit:
+  enabled: true
+
+route:
+  parentRefs:
+    - {name: gateway, namespace: gateway-system}
+  host: preprod.example.com
+  mailpitHost: mail.preprod.example.com
+
+networkPolicy:
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: gateway-system

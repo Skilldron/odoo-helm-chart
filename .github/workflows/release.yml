@@ -1,0 +1,55 @@
+# Release on a tag vX.Y.Z: the checks, then the chart packaged and pushed to
+# oci://ghcr.io/<owner>/charts/odoo, and a GitHub release. The tag must equal the version
+# of charts/odoo/Chart.yaml.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: ./.github/workflows/lint.yml
+
+  publish:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0
+      - name: Package
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(sed -n 's/^version: *//p' charts/odoo/Chart.yaml)"
+          if [ "$TAG" != "v$version" ]; then
+              echo "::error::tag $TAG differs from the chart version $version"
+              exit 1
+          fi
+          helm package charts/odoo --destination "$RUNNER_TEMP/dist"
+      - name: Push
+        env:
+          OWNER: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GITHUB_TOKEN" | helm registry login ghcr.io -u "$ACTOR" --password-stdin
+          helm push "$RUNNER_TEMP"/dist/odoo-*.tgz "oci://ghcr.io/${OWNER,,}/charts" | tee "$RUNNER_TEMP/push.log"
+          echo "### Chart published" >>"$GITHUB_STEP_SUMMARY"
+          grep -E '^(Pushed|Digest):' "$RUNNER_TEMP/push.log" >>"$GITHUB_STEP_SUMMARY"
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes

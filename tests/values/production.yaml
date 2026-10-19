@@ -1,0 +1,44 @@
+# Test values: persistent production instance on an external CNPG database.
+environment: production
+
+odoo:
+  modules: [sale_management]
+  config:
+    options:
+      workers: 4
+      max_cron_threads: 2
+      smtp_server: smtp.example.com
+      smtp_port: 587
+      smtp_ssl: true
+      smtp_user: odoo@example.com
+      email_from: odoo@example.com
+  persistence:
+    size: 20Gi
+  resources:
+    requests: {cpu: 500m, memory: 2Gi}
+    limits: {memory: 4Gi}
+
+secrets:
+  existingSecret: odoo-app
+
+database:
+  external:
+    # Stable Service odoo-db and the Secret of the declared role odoo
+    host: odoo-db
+    port: 5432
+    secret: odoo-db-credentials
+
+restorePoints:
+  # deletionPolicy: Delete
+  volumeSnapshotClass: csi-snapclass
+
+route:
+  parentRefs:
+    - {name: gateway, namespace: gateway-system}
+  host: odoo.example.com
+
+networkPolicy:
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: gateway-system
