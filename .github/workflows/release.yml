@@ -52,4 +52,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
+        # A release written by hand before the tag is kept as is
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Release $TAG exists, kept"
+          else
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
+          fi
