@@ -18,7 +18,7 @@ spec:
       labels:
         {{- include "odoo.labels" . | nindent 8 }}
         app.kubernetes.io/component: odoo
-        {{ .Values.labelPrefix }}/digest: {{ include "odoo.shortDigest" . | quote }}
+        {{ .Values.labelPrefix }}/image: {{ include "odoo.imageKey" . | quote }}
       annotations:
         checksum/config: {{ include "odoo.conf" . | sha256sum }}
     spec:
@@ -32,7 +32,7 @@ spec:
         exists: no wait.
         */}}
         - name: wait-db
-          image: {{ include "odoo.image" . }}
+          {{- include "odoo.imageFields" . | nindent 10 }}
           command: [sh, -c]
           args:
             - >-
@@ -50,7 +50,7 @@ spec:
             - {name: tmp, mountPath: /tmp}
       containers:
         - name: odoo
-          image: {{ include "odoo.image" . }}
+          {{- include "odoo.imageFields" . | nindent 10 }}
           env:
             {{- include "odoo.env" . | nindent 12 }}
           ports:

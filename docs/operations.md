@@ -82,7 +82,8 @@ restoration creates a **new** database cluster and keeps the old one for analysi
    ```
 
 5. Roll the release back to the last revision deployed before `N`. The update hooks do
-   not run on a rollback: Odoo restarts on the previous image.
+   not run on a rollback: Odoo restarts on the previous image (the same image if it was
+   given by digest; see [Image reference](../README.md#image-reference) for a tag).
 
    ```sh
    helm history odoo -n $ns

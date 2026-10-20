@@ -1,22 +1,36 @@
 {{/* Names */}}
-{{- define "odoo.shortDigest" -}}
+{{/* Short key of the image: its digest, or else a hash of repository:tag */}}
+{{- define "odoo.imageKey" -}}
+{{- if .Values.image.digest -}}
 {{ trimPrefix "sha256:" .Values.image.digest | trunc 12 }}
+{{- else -}}
+{{ printf "%s:%s" .Values.image.repository .Values.image.tag | sha256sum | trunc 12 }}
+{{- end }}
 {{- end }}
 
+{{/* repository[:tag][@digest]: with a digest, the digest decides what runs */}}
 {{- define "odoo.image" -}}
-{{ .Values.image.repository }}@{{ .Values.image.digest }}
+{{ .Values.image.repository }}{{ with .Values.image.tag }}:{{ . }}{{ end }}{{ with .Values.image.digest }}@{{ . }}{{ end }}
+{{- end }}
+
+{{/* Image fields of an Odoo container */}}
+{{- define "odoo.imageFields" -}}
+image: {{ include "odoo.image" . }}
+{{- with .Values.image.pullPolicy }}
+imagePullPolicy: {{ . }}
+{{- end }}
 {{- end }}
 
 {{- define "odoo.ephemeral" -}}
 {{- if .Values.ephemeral }}true{{ end }}
 {{- end }}
 
-{{/* Filestore volume: ephemeral volumes carry the digest (reset on a new image) */}}
+{{/* Filestore volume: ephemeral volumes carry the image key (reset on a new image) */}}
 {{- define "odoo.dataClaim" -}}
 {{- if .Values.odoo.persistence.existingClaim -}}
 {{ .Values.odoo.persistence.existingClaim }}
 {{- else if include "odoo.ephemeral" . -}}
-{{ .Release.Name }}-odoo-data-{{ include "odoo.shortDigest" . }}
+{{ .Release.Name }}-odoo-data-{{ include "odoo.imageKey" . }}
 {{- else -}}
 {{ .Release.Name }}-odoo-data
 {{- end }}
@@ -38,7 +52,7 @@
 {{- end }}
 
 {{- define "odoo.pgdataClaim" -}}
-{{ .Release.Name }}-pgdata-{{ include "odoo.shortDigest" . }}
+{{ .Release.Name }}-pgdata-{{ include "odoo.imageKey" . }}
 {{- end }}
 
 {{- define "odoo.generatedSecret" -}}
@@ -143,8 +157,14 @@ smtp_port = 1025
 {{- if and $v.environment (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $v.environment)) -}}
 {{- fail "environment must be a DNS label (lowercase letters, digits, hyphens)" -}}
 {{- end -}}
-{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $v.image.digest) -}}
+{{- if not (or $v.image.digest $v.image.tag) -}}
+{{- fail "image: set image.digest (recommended) or image.tag" -}}
+{{- end -}}
+{{- if and $v.image.digest (not (regexMatch "^sha256:[a-f0-9]{64}$" $v.image.digest)) -}}
 {{- fail "image.digest must be sha256:<64 hex>" -}}
+{{- end -}}
+{{- if and $v.image.tag (not (regexMatch "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$" $v.image.tag)) -}}
+{{- fail "image.tag is not a valid image tag" -}}
 {{- end -}}
 {{- if and $v.ephemeral $v.neutralize -}}
 {{- fail "neutralize is for a copy of another instance's data, not for ephemeral=true" -}}

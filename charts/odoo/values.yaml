@@ -25,8 +25,14 @@ labelPrefix: odoo.haroldd.dev
 
 image:
   repository: ghcr.io/owner/repo/builds
-  # sha256:<64 hex>. The image is always referenced by digest.
+  # Tag of the image, e.g. 1.0.0. Set the tag, the digest or both.
+  tag: ""
+  # sha256:<64 hex>, recommended: it takes precedence over the tag, so what runs is what
+  # was tested, and restore points record that exact image.
   digest: ""
+  # Always, IfNotPresent or Never; empty: Kubernetes default (IfNotPresent, except for the
+  # tag latest). Always if a tag is pushed again.
+  pullPolicy: ""
   # Names of existing docker-registry Secrets (GHCR)
   pullSecrets: []
 

@@ -1,5 +1,5 @@
 {{- /*
-PostgreSQL of an ephemeral instance. Its volume carries the digest: a new image starts
+PostgreSQL of an ephemeral instance. Its volume carries the image key: a new image starts
 an empty server, where odoo db init creates the database. POSTGRES_DB=postgres, otherwise
 the image would create Odoo's database and db init would refuse it.
 */ -}}

@@ -30,8 +30,8 @@ failed update never serves a half-migrated database.
 - **Configuration from values.** `odoo.conf` is generated from `odoo.config`, without
   any secret; passwords come from Kubernetes Secrets as environment variables, which
   Odoo 20 reads natively.
-- **Image by digest only.** The image is always `repository@sha256:…`: what runs is what
-  was tested.
+- **Image by digest or tag.** The digest is recommended: what runs is what was tested,
+  and restore points record that exact image.
 - **Hardened pods.** Non-root, read-only root filesystem, no capabilities, no service
   account token in the Odoo pods; NetworkPolicies.
 - **Gateway API.** One `HTTPRoute` for HTTP and, with `workers > 0`, the websocket
@@ -123,6 +123,26 @@ The defaults follow the official `odoo` image: an image built `FROM odoo:20.0` w
   `click-odoo-update`, and `psql`, used to wait for PostgreSQL and to name the restore
   point in the write-ahead log.
 
+### Image reference
+
+Set `image.digest`, `image.tag`, or both; the Odoo containers run
+`repository[:tag][@digest]`. With a digest, the digest decides what runs and the tag is
+only informative.
+
+**Prefer the digest** for persistent instances. A tag can be pushed again with another
+image, and the chart then cannot tell:
+
+- the restore point records the reference, not the image: a rollback after a restore
+  (`helm rollback`) may start a newer image than the one the database was saved with;
+- a new image behind the same tag changes nothing in the rendered release, and the nodes
+  keep the image they have already pulled (`IfNotPresent`, the Kubernetes default): only
+  pods started afterwards with `image.pullPolicy: Always` run it, and the Jobs of one
+  update may not all run the same image;
+- a review app resets its database when the reference changes, not when the image behind
+  the same tag changes.
+
+A tag that is never pushed twice (a release version) avoids all of this.
+
 ## Install
 
 A review app, for a quick look (the chart creates the database):
@@ -131,7 +151,7 @@ A review app, for a quick look (the chart creates the database):
 helm upgrade --install pr-42 oci://ghcr.io/skilldron/charts/odoo --version <version> -n odoo-review \
   --set ephemeral=true \
   --set image.repository=ghcr.io/acme/odoo/builds \
-  --set image.digest=sha256:<digest> \
+  --set image.tag=<tag> \
   --set 'route.parentRefs[0].name=gateway' --set route.reviewDomain=review.example.com
 kubectl -n odoo-review rollout status deploy/pr-42
 ```
@@ -236,7 +256,9 @@ kubectl -n odoo-prod patch cluster odoo-db --type merge -p \
 | `environment`                                                | `""`                   | Name of the environment, set as a label                                                                                                               |
 | `project`                                                    | `odoo`                 | Prefix of the review app hosts                                                                                                                        |
 | `labelPrefix`                                                | `odoo.haroldd.dev`     | Prefix of the chart's labels and annotations. Changing it hides the existing restore points from the chart                                            |
-| `image.repository`, `image.digest`                           |                        | Odoo image, by digest (`sha256:…`)                                                                                                                    |
+| `image.repository`                                           |                        | Odoo image                                                                                                                                            |
+| `image.digest`, `image.tag`                                  | `""`                   | [Image reference](#image-reference): the digest (`sha256:…`, recommended), the tag, or both; the digest takes precedence                              |
+| `image.pullPolicy`                                           | `""`                   | `Always`, `IfNotPresent` or `Never`; empty: Kubernetes default                                                                                        |
 | `image.pullSecrets`                                          | `[]`                   | Registry Secrets                                                                                                                                      |
 | `podSecurityContext.runAsUser`, `.runAsGroup`, `.fsGroup`    | `100`, `101`, `101`    | User and group of the Odoo containers, those of the image; `fsGroup` makes the volumes writable. `null` omits the field (OpenShift, numeric `USER`)   |
 | `odoo.replicas`                                              | `1`                    | Odoo instances                                                                                                                                        |

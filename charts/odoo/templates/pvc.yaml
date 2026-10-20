@@ -1,5 +1,5 @@
 {{- /*
-Filestore and sessions (/var/lib/odoo). Ephemeral instance: named after the digest, a new
+Filestore and sessions (/var/lib/odoo). Ephemeral instance: named after the image, a new
 image gets a new volume and Helm deletes the old one. Persistent instance: kept by Helm; a
 restored filestore is used through odoo.persistence.existingClaim instead.
 */ -}}

@@ -49,11 +49,11 @@ spec:
                 matchLabels:
                   {{- include "odoo.selectorLabels" . | nindent 18 }}
                   app.kubernetes.io/component: odoo
-                  {{ .Values.labelPrefix }}/digest: {{ include "odoo.shortDigest" . | quote }}
+                  {{ .Values.labelPrefix }}/image: {{ include "odoo.imageKey" . | quote }}
       {{- end }}
       initContainers:
         - name: db-init
-          image: {{ include "odoo.image" . }}
+          {{- include "odoo.imageFields" . | nindent 10 }}
           command: [sh, -euc]
           args:
             - |
@@ -93,7 +93,7 @@ spec:
         {{- if .Values.neutralize }}
         # Copy of another instance's data (refresh): neutralized before Odoo starts
         - name: neutralize
-          image: {{ include "odoo.image" . }}
+          {{- include "odoo.imageFields" . | nindent 10 }}
           args: [odoo, neutralize, -d, {{ .Values.database.name | quote }}]
           env:
             {{- include "odoo.env" . | nindent 12 }}
@@ -105,7 +105,7 @@ spec:
             {{- include "odoo.volumeMounts" . | nindent 12 }}
         {{- end }}
         - name: install
-          image: {{ include "odoo.image" . }}
+          {{- include "odoo.imageFields" . | nindent 10 }}
           args: [odoo, -i, {{ join "," $modules }}, --stop-after-init, --no-http]
           env:
             {{- include "odoo.env" . | nindent 12 }}
@@ -117,7 +117,7 @@ spec:
             {{- include "odoo.volumeMounts" . | nindent 12 }}
       containers:
         - name: update
-          image: {{ include "odoo.image" . }}
+          {{- include "odoo.imageFields" . | nindent 10 }}
           args: [click-odoo-update]
           env:
             {{- include "odoo.env" . | nindent 12 }}

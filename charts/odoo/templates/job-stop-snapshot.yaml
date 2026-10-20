@@ -69,7 +69,7 @@ spec:
                 echo "$cluster-preupgrade-r{{ .Release.Revision }}" >/tmp/name
               fi
         - name: restore-point
-          image: {{ include "odoo.image" . }}
+          {{- include "odoo.imageFields" . | nindent 10 }}
           command: [sh, -euc]
           args:
             - |

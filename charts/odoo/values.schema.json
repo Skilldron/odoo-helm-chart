@@ -36,10 +36,12 @@
     },
     "image": {
       "type": "object",
-      "required": ["repository", "digest"],
+      "required": ["repository"],
       "properties": {
         "repository": {"type": "string", "minLength": 1},
-        "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "tag": {"type": "string", "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?$"},
+        "digest": {"type": "string", "pattern": "^(sha256:[a-f0-9]{64})?$"},
+        "pullPolicy": {"enum": ["", "Always", "IfNotPresent", "Never"]},
         "pullSecrets": {"type": "array", "items": {"type": "string"}}
       }
     },

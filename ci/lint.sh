@@ -115,7 +115,10 @@ refused "option imposed by the chart" staging --set odoo.config.options.data_dir
 refused "SMTP overridden while Mailpit is enabled" review --set odoo.config.options.smtp_server=x
 refused "option also set by secrets.env" staging --set odoo.config.queue_job.http_auth_user=u \
     --set-json 'secrets.env=[{"name":"ODOO_QUEUE_JOB_HTTP_AUTH_USER","secret":"s","key":"k"}]'
-refused "image referenced by tag" staging --set image.digest=latest
+refused "digest that is not sha256:<64 hex>" staging --set image.digest=latest
+refused "image without tag nor digest" staging --set image.digest=
+refused "invalid image tag" staging --set image.digest= --set image.tag=-1.0
+refused "unknown image pull policy" staging --set image.pullPolicy=Sometimes
 refused "several instances on a ReadWriteOnce filestore" production --set odoo.replicas=2
 refused "filestore PVC without VolumeSnapshotClass on a persistent instance" staging \
     --set restorePoints.volumeSnapshotClass=
@@ -242,6 +245,26 @@ render production --set podSecurityContext=null >"$work/nouid.yaml"
 check "podSecurityContext null: user left to the platform, still non-root" \
     equals "$(pod_user "$work/nouid.yaml" Deployment odoo)" \
     "runAsNonRoot: true seccompProfile: type: RuntimeDefault "
+
+# 9. Image of the Odoo containers: digest, tag, or both (the digest decides)
+repository=ghcr.io/owner/repo/builds
+odoo_images() { sed -n "s|^ *image: \($repository.*\)|\1|p" "$1" | sort -u; } # odoo_images <render>
+check "digest: every Odoo container on repository@digest" \
+    equals "$(odoo_images "$work/staging-upgrade.yaml")" "$repository@$digest"
+render staging --is-upgrade --set image.tag=1.0.0 >"$work/tag-digest.yaml"
+check "tag and digest: repository:tag@digest" \
+    equals "$(odoo_images "$work/tag-digest.yaml")" "$repository:1.0.0@$digest"
+render review --set image.digest= --set image.tag=1.0.0 >"$work/tag.yaml"
+tag_key="$(printf %s "$repository:1.0.0" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-12)"
+tag_only() {
+    equals "$(odoo_images "$work/tag.yaml")" "$repository:1.0.0" &&
+        grep -q "pgdata-$tag_key" "$work/tag.yaml" && grep -q "odoo-data-$tag_key" "$work/tag.yaml"
+}
+check "tag only: repository:tag, review volumes named after a hash of the image" tag_only
+check "pull policy: Kubernetes default when empty" fails grep -q imagePullPolicy "$work/staging-upgrade.yaml"
+render staging --is-upgrade --set image.pullPolicy=Always >"$work/pull.yaml"
+check "pull policy Always on every Odoo container" equals \
+    "$(grep -c "imagePullPolicy: Always" "$work/pull.yaml")" "$(grep -c "image: $repository" "$work/pull.yaml")"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     printf '### Chart checks\n\n- failures: %s\n' "$failures" >>"$GITHUB_STEP_SUMMARY"
