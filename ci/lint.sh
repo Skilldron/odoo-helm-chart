@@ -261,6 +261,15 @@ tag_only() {
         grep -q "pgdata-$tag_key" "$work/tag.yaml" && grep -q "odoo-data-$tag_key" "$work/tag.yaml"
 }
 check "tag only: repository:tag, review volumes named after a hash of the image" tag_only
+# 10. Probes of Odoo: liveness on TCP (a module install from the interface blocks a
+# threaded Odoo), readiness and startup on /web/health
+odoo_probe() { # odoo_probe <render> <probe>: the probe of the container odoo, on one line
+    doc "$1" Deployment odoo | awk -v p="          $2:" '$0 == p {f = 1; next}
+        f && !/^            / {exit} f {gsub(/^ +/, ""); printf "%s ", $0}'
+}
+check "liveness: TCP on the HTTP port" \
+    equals "$(odoo_probe "$work/staging.yaml" livenessProbe)" "tcpSocket: {port: http} periodSeconds: 30 timeoutSeconds: 5 failureThreshold: 3 "
+check "readiness: HTTP /web/health" has "$(odoo_probe "$work/staging.yaml" readinessProbe)" "httpGet: {path: /web/health"
 check "pull policy: Kubernetes default when empty" fails grep -q imagePullPolicy "$work/staging-upgrade.yaml"
 render staging --is-upgrade --set image.pullPolicy=Always >"$work/pull.yaml"
 check "pull policy Always on every Odoo container" equals \
