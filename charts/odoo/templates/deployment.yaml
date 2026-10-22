@@ -62,8 +62,10 @@ spec:
             httpGet: {path: /web/health, port: http}
             periodSeconds: 5
             failureThreshold: 60
+          # TCP: a threaded Odoo (workers 0) answers no HTTP request while it installs a
+          # module from the interface; only a process no longer listening is restarted
           livenessProbe:
-            httpGet: {path: /web/health, port: http}
+            tcpSocket: {port: http}
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
