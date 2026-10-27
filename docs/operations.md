@@ -143,13 +143,52 @@ kubectl -n $ns label backups.postgresql.cnpg.io <point> $p/upgrade-state=validat
 
 ## After a restoration
 
-- Analyse the old cluster if needed, then uninstall it: `helm uninstall odoo-db -n $ns`.
-  The stable Service belongs to no release and stays in place.
+- [Analyse the old cluster](#analyse-the-old-cluster) if needed, then uninstall it:
+  `helm uninstall odoo-db -n $ns`. The stable Service belongs to no release and stays in
+  place.
 - The restored cluster has one instance. Scale it with the same chart reference as its
   installation:
   `helm upgrade odoo-db-r<N> cluster --repo https://cloudnative-pg.github.io/charts --version <version> -n $ns --reuse-values --set cluster.instances=3`.
 - The restore points of the old cluster stay listed and usable until the retention
   purges them.
+
+### Analyse the old cluster
+
+The old cluster holds the database as the failed update left it. It keeps its own
+Services (`odoo-db-rw`, `odoo-db-r`): only the stable Service moved to the restored
+cluster. Odoo's database is `database.name` (`odoo` by default).
+
+1. Read the logs of the failed Job first
+   ([Investigate a failed hook Job](#investigate-a-failed-hook-job)): the traceback is
+   usually enough.
+2. Query the database, as `postgres` over the local socket of the instance:
+
+   ```sh
+   kubectl -n $ns exec -it odoo-db-1 -c postgres -- psql -d odoo
+   ```
+
+   Run the same queries on the restored cluster (`odoo-db-r<N>-1`) to compare, for
+   instance the state of the updated modules:
+   `select name, latest_version, state from ir_module_module where name = '<module>';`.
+   For a desktop client, forward the port of the old cluster
+   (`kubectl -n $ns port-forward svc/odoo-db-rw 5433:5432`) and connect with the
+   credentials of the database Secret.
+
+3. Reproduce the failure in a development environment, from a dump:
+
+   ```sh
+   kubectl -n $ns exec odoo-db-1 -c postgres -- pg_dump -Fc -d odoo >failed.dump
+   ```
+
+   Restore it with `pg_restore`, then run the update with the code of the release and a
+   debugger. The dump holds the data of the instance: protect it like the instance, and
+   delete it after use. It does not contain the filestore, which a module update seldom
+   needs.
+
+Odoo updates the modules in one transaction: a failed update is rolled back, and the old
+cluster then matches the restore point, so a dump of the restored cluster reproduces the
+failure as well. The old cluster differs when a migration script commits along the way
+(`cr.commit()`) and leaves part of its changes.
 
 ## Investigate a failed hook Job
 
