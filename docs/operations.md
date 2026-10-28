@@ -219,8 +219,15 @@ recover the database as it was before that update. See CloudNativePG
 [Barman Cloud plugin](https://cloudnative-pg.io/plugin-barman-cloud/) documentation.
 
 Then recreate the stable Service, the Secrets and the release as for an installation,
-and restore the filestore from its own backup (S3 bucket, or a backup of the volume to
-remote storage).
+and restore the filestore from its own backup: the S3 bucket, or the last backup of the
+volume outside the cluster. The chart backs up the database only: install a recurring
+job that backs the filestore volume up outside the cluster with the instance, for
+example a Longhorn `RecurringJob` of task `backup`. A backup taken by a `VolumeSnapshot`
+whose class deletes its content goes away with the namespace. Longhorn lists the backups
+of its backup target (`kubectl -n longhorn-system get backups.longhorn.io`): restore one
+as in [Copy the filestore volume](#copy-the-filestore-volume), then install the release
+with `odoo.persistence.existingClaim`. The filestore is as recent as its last backup,
+the database as the last archived write-ahead log: files added in between are missing.
 
 ## Copy production into another instance
 

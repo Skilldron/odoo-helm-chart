@@ -51,6 +51,7 @@ The chart installs no cluster component. It needs:
 | **Persistent instances only:**                                                                                         |                         |                                                |
 | CloudNativePG, with a database cluster [configured for the chart](#database-of-a-persistent-instance)                  | the database            | CloudNativePG 1.30, `cnpg/cluster` chart 0.9.0 |
 | The Barman Cloud plugin and an S3-compatible object store, for the nightly backups and the write-ahead log archive     | disaster recovery       | plugin-barman-cloud 0.15                       |
+| A recurring backup of the filestore volume outside the cluster, e.g. a Longhorn `RecurringJob` of task `backup`        | disaster recovery       | Longhorn 1.12                                  |
 | A CSI driver with volume snapshots, the snapshot controller, and a `VolumeSnapshotClass` with `deletionPolicy: Delete` | restore points          | csi-driver-host-path 1.18                      |
 | An [application Secret](#application-secret) (`secrets.existingSecret`)                                                | Odoo passwords          |                                                |
 
