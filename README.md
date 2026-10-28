@@ -127,7 +127,8 @@ The defaults follow the official `odoo` image: an image built `FROM odoo:20.0` w
 
 Set `image.digest`, `image.tag`, or both; the Odoo containers run
 `repository[:tag][@digest]`. With a digest, the digest decides what runs and the tag is
-only informative.
+only informative: it is also set as the label `app.kubernetes.io/version` of the Odoo
+pods, so `kubectl get pods -L app.kubernetes.io/version` shows the version that runs.
 
 **Prefer the digest** for persistent instances. A tag can be pushed again with another
 image, and the chart then cannot tell:
@@ -260,6 +261,7 @@ kubectl -n odoo-prod patch cluster odoo-db --type merge -p \
 | `image.digest`, `image.tag`                                  | `""`                   | [Image reference](#image-reference): the digest (`sha256:…`, recommended), the tag, or both; the digest takes precedence                              |
 | `image.pullPolicy`                                           | `""`                   | `Always`, `IfNotPresent` or `Never`; empty: Kubernetes default                                                                                        |
 | `image.pullSecrets`                                          | `[]`                   | Registry Secrets                                                                                                                                      |
+| `podLabels`, `podAnnotations`                                | `{}`                   | Labels and annotations added to the Odoo pods; the chart's own keys keep their value                                                                  |
 | `podSecurityContext.runAsUser`, `.runAsGroup`, `.fsGroup`    | `100`, `101`, `101`    | User and group of the Odoo containers, those of the image; `fsGroup` makes the volumes writable. `null` omits the field (OpenShift, numeric `USER`)   |
 | `odoo.replicas`                                              | `1`                    | Odoo instances                                                                                                                                        |
 | `odoo.modules`                                               | `[]`                   | Modules installed by the `migrate` Job; `base` when empty                                                                                             |
