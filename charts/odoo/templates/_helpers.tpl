@@ -8,6 +8,36 @@
 {{- end }}
 {{- end }}
 
+{{/* Version of Odoo: the image tag as a label value (63 characters, alphanumeric ends); empty without tag */}}
+{{- define "odoo.version" -}}
+{{- regexReplaceAll "^[^A-Za-z0-9]+|[^A-Za-z0-9]+$" (trunc 63 .Values.image.tag) "" -}}
+{{- end }}
+
+{{/* Labels the chart sets on the Odoo pods */}}
+{{- define "odoo.podLabels" -}}
+{{ include "odoo.labels" . }}
+app.kubernetes.io/component: odoo
+{{ .Values.labelPrefix }}/image: {{ include "odoo.imageKey" . | quote }}
+{{- with include "odoo.version" . }}
+app.kubernetes.io/version: {{ . | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
+Labels or annotations of the user (podLabels, podAnnotations), without the keys the chart
+already sets: list <user dict> <chart's YAML>
+*/}}
+{{- define "odoo.extraMetadata" -}}
+{{- $chart := index . 1 | fromYaml }}
+{{- $extra := dict }}
+{{- range $key, $value := index . 0 }}
+{{- if not (hasKey $chart $key) }}
+{{- $_ := set $extra $key (toString $value) }}
+{{- end }}
+{{- end }}
+{{- with $extra }}{{ toYaml . }}{{ end }}
+{{- end }}
+
 {{/* repository[:tag][@digest]: with a digest, the digest decides what runs */}}
 {{- define "odoo.image" -}}
 {{ .Values.image.repository }}{{ with .Values.image.tag }}:{{ . }}{{ end }}{{ with .Values.image.digest }}@{{ . }}{{ end }}

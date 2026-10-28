@@ -36,6 +36,12 @@ image:
   # Names of existing docker-registry Secrets (GHCR)
   pullSecrets: []
 
+# Labels and annotations added to the Odoo pods (team, cost center, monitoring...). The
+# chart's own keys keep the chart's value. With an image tag, the pods also carry the
+# standard label app.kubernetes.io/version.
+podLabels: {}
+podAnnotations: {}
+
 # User of the Odoo containers, which must match the user of the image (default: uid and
 # gid of the user odoo of the official odoo image). fsGroup makes the volumes writable by
 # that group. null omits a field: for a platform that assigns the uid itself (OpenShift),

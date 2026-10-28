@@ -125,6 +125,9 @@ refused "filestore PVC without VolumeSnapshotClass on a persistent instance" sta
 refused "no restore point kept" production --set restorePoints.keep=0
 refused "Odoo run as root" production --set podSecurityContext.runAsUser=0
 refused "unknown field in podSecurityContext" production --set podSecurityContext.runAsNonRoot=false
+refused "pod label value that is not a label value" staging --set podLabels.team=a/b
+refused "pod label key that is not a qualified name" staging --set-json 'podLabels={"-team":"erp"}'
+refused "pod annotation that is not a string" staging --set podAnnotations.ticket=1
 
 # 4. No destructive command in any render; reviews only reset through their volumes
 if grep -nEw 'dropdb|rm' "$work"/*.yaml || grep -nE 'DROP DATABASE|--force' "$work"/*.yaml; then
@@ -274,6 +277,33 @@ check "pull policy: Kubernetes default when empty" fails grep -q imagePullPolicy
 render staging --is-upgrade --set image.pullPolicy=Always >"$work/pull.yaml"
 check "pull policy Always on every Odoo container" equals \
     "$(grep -c "imagePullPolicy: Always" "$work/pull.yaml")" "$(grep -c "image: $repository" "$work/pull.yaml")"
+
+# 11. Metadata of the Odoo pods: version label from the tag, podLabels and podAnnotations
+# added without overriding the chart's keys
+pod_metadata() { # pod_metadata <render> <labels|annotations>: of the Odoo pod, one per line
+    doc "$1" Deployment odoo | awk -v m="      $2:" '$0 == m {f = 1; next}
+        f && !/^        / {exit} f {gsub(/^ +/, ""); print}'
+}
+check "no tag: no version label" \
+    fails grep -q "app.kubernetes.io/version" "$work/staging-upgrade.yaml"
+check "tag: version label on the Deployment and its pods" \
+    equals "$(grep -c 'app.kubernetes.io/version: "1.0.0"' "$work/tag-digest.yaml")" 2
+render staging --is-upgrade --set image.tag=_1.0.0- >"$work/odd-tag.yaml"
+check "tag with non-alphanumeric ends: trimmed version label" \
+    has "$(pod_metadata "$work/odd-tag.yaml" labels)" 'app.kubernetes.io/version: "1.0.0"$'
+render staging --is-upgrade --set podLabels.team=erp --set podLabels.app\\.kubernetes\\.io/name=x \
+    --set podAnnotations.example\\.com/ticket=T-1 --set podAnnotations.checksum/config=x \
+    >"$work/pod-metadata.yaml"
+labels="$(pod_metadata "$work/pod-metadata.yaml" labels)"
+annotations="$(pod_metadata "$work/pod-metadata.yaml" annotations)"
+check "podLabels: added to the Odoo pods" has "$labels" "^team: erp$"
+check "podLabels: the chart's labels win (selector intact)" \
+    equals "$(grep -c '^app.kubernetes.io/name:' <<<"$labels")/$(grep '^app.kubernetes.io/name:' <<<"$labels")" \
+    "1/app.kubernetes.io/name: odoo"
+check "podAnnotations: added to the Odoo pods" has "$annotations" "^example.com/ticket: T-1$"
+check "podAnnotations: the chart's annotations win" \
+    equals "$(grep '^checksum/config:' <<<"$annotations")" \
+    "$(grep '^checksum/config:' <<<"$(pod_metadata "$work/staging-upgrade.yaml" annotations)")"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     printf '### Chart checks\n\n- failures: %s\n' "$failures" >>"$GITHUB_STEP_SUMMARY"

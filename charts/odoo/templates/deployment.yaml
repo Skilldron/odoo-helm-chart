@@ -5,6 +5,9 @@ metadata:
   labels:
     {{- include "odoo.labels" . | nindent 4 }}
     app.kubernetes.io/component: odoo
+    {{- with include "odoo.version" . }}
+    app.kubernetes.io/version: {{ . | quote }}
+    {{- end }}
 spec:
   replicas: {{ .Values.odoo.replicas }}
   strategy:
@@ -15,12 +18,18 @@ spec:
       app.kubernetes.io/component: odoo
   template:
     metadata:
+      {{- $labels := include "odoo.podLabels" . }}
       labels:
-        {{- include "odoo.labels" . | nindent 8 }}
-        app.kubernetes.io/component: odoo
-        {{ .Values.labelPrefix }}/image: {{ include "odoo.imageKey" . | quote }}
+        {{- $labels | nindent 8 }}
+        {{- with include "odoo.extraMetadata" (list .Values.podLabels $labels) }}
+        {{- . | nindent 8 }}
+        {{- end }}
+      {{- $annotations := printf "checksum/config: %s" (include "odoo.conf" . | sha256sum) }}
       annotations:
-        checksum/config: {{ include "odoo.conf" . | sha256sum }}
+        {{- $annotations | nindent 8 }}
+        {{- with include "odoo.extraMetadata" (list .Values.podAnnotations $annotations) }}
+        {{- . | nindent 8 }}
+        {{- end }}
     spec:
       {{- include "odoo.podCommon" . | nindent 6 }}
       initContainers:
