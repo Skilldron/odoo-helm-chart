@@ -143,13 +143,55 @@ kubectl -n $ns label backups.postgresql.cnpg.io <point> $p/upgrade-state=validat
 
 ## After a restoration
 
-- Analyse the old cluster if needed, then uninstall it: `helm uninstall odoo-db -n $ns`.
-  The stable Service belongs to no release and stays in place.
+- [Analyse the old cluster](#analyse-the-old-cluster) if needed, then uninstall it:
+  `helm uninstall odoo-db -n $ns`. The stable Service belongs to no release and stays in
+  place. The `cnpg/cluster` chart creates the `ObjectStore` as a hook, which
+  `helm uninstall` keeps: delete it too,
+  `kubectl -n $ns delete objectstores.barmancloud.cnpg.io odoo-db-backups`. Its backups
+  stay in the object storage.
 - The restored cluster has one instance. Scale it with the same chart reference as its
   installation:
   `helm upgrade odoo-db-r<N> cluster --repo https://cloudnative-pg.github.io/charts --version <version> -n $ns --reuse-values --set cluster.instances=3`.
 - The restore points of the old cluster stay listed and usable until the retention
   purges them.
+
+### Analyse the old cluster
+
+The old cluster holds the database as the failed update left it. It keeps its own
+Services (`odoo-db-rw`, `odoo-db-r`): only the stable Service moved to the restored
+cluster. Odoo's database is `database.name` (`odoo` by default).
+
+1. Read the logs of the failed Job first
+   ([Investigate a failed hook Job](#investigate-a-failed-hook-job)): the traceback is
+   usually enough.
+2. Query the database, as `postgres` over the local socket of the instance:
+
+   ```sh
+   kubectl -n $ns exec -it odoo-db-1 -c postgres -- psql -d odoo
+   ```
+
+   Run the same queries on the restored cluster (`odoo-db-r<N>-1`) to compare, for
+   instance the state of the updated modules:
+   `select name, latest_version, state from ir_module_module where name = '<module>';`.
+   For a desktop client, forward the port of the old cluster
+   (`kubectl -n $ns port-forward svc/odoo-db-rw 5433:5432`) and connect with the
+   credentials of the database Secret.
+
+3. Reproduce the failure in a development environment, from a dump:
+
+   ```sh
+   kubectl -n $ns exec odoo-db-1 -c postgres -- pg_dump -Fc -d odoo >failed.dump
+   ```
+
+   Restore it with `pg_restore`, then run the update with the code of the release and a
+   debugger. The dump holds the data of the instance: protect it like the instance, and
+   delete it after use. It does not contain the filestore, which a module update seldom
+   needs.
+
+Odoo updates the modules in one transaction: a failed update is rolled back, and the old
+cluster then matches the restore point, so a dump of the restored cluster reproduces the
+failure as well. The old cluster differs when a migration script commits along the way
+(`cr.commit()`) and leaves part of its changes.
 
 ## Investigate a failed hook Job
 
@@ -161,8 +203,8 @@ kubectl -n $ns get jobs -l app.kubernetes.io/instance=odoo
 kubectl -n $ns logs job/odoo-migrate --all-containers --ignore-errors
 ```
 
-`migrate` runs its steps as successive containers (`db-init`, `neutralize` when asked,
-`install`, `update`): the failing container names the failing step.
+`migrate` runs its steps as successive containers (`db-init`, `neutralize` and `adapt`
+when asked, `install`, `update`): the failing container names the failing step.
 
 ## Recover from a disaster
 
@@ -182,24 +224,180 @@ remote storage).
 
 ## Copy production into another instance
 
-To give a staging or preproduction instance a copy of the production data:
+To give a staging or preproduction instance a copy of the production data, with `ns` the
+target namespace and `prod` that of production:
+
+```sh
+ns=odoo-staging
+prod=odoo-prod
+```
 
 1. Recover the latest production backup from object storage into a new database cluster
    of the target namespace, as for a disaster, with read-only credentials to the
    production bucket and the target's own backup folder.
-2. Copy the filestore. With S3, copy the production bucket into the target's own bucket.
-   With a volume, restore a backup of the production volume taken to remote storage
-   (Longhorn backup target, Velero…): a volume snapshot does not cross namespaces or
-   clusters.
-3. Switch the target's stable Service to the new cluster.
-4. Update the target with `neutralize=true`, set on the command line only:
+2. Bring the production filestore into the target namespace. With S3, copy the
+   production bucket into the target's own bucket. With a volume, restore a backup of
+   the production volume taken to remote storage: a volume snapshot does not cross
+   namespaces or clusters. See [Copy the filestore volume](#copy-the-filestore-volume)
+   for Longhorn.
+3. Stop Odoo, so that it does not connect to the copy before it is neutralized:
 
    ```sh
-   helm upgrade odoo <chart> -n odoo-staging -f values.yaml \
+   kubectl -n $ns scale deployment odoo --replicas=0
+   ```
+
+   With a volume, then copy `filestore/<database>` of the restored volume into the
+   target's volume.
+
+4. Switch the target's stable Service to the new cluster:
+
+   ```sh
+   kubectl -n $ns patch service odoo-db \
+     -p '{"spec":{"selector":{"cnpg.io/cluster":"<new cluster>"}}}'
+   ```
+
+5. Update the target with `neutralize=true`, set on the command line only:
+
+   ```sh
+   helm upgrade odoo <chart> -n $ns -f values.yaml \
      --set image.digest=sha256:<digest> --set neutralize=true --wait --timeout 60m
    ```
 
-   The update hooks stop Odoo, take a restore point of the copy, run `odoo neutralize`
-   (no outgoing mail, no scheduled actions, no calls to external services), then update
-   the modules from the production version. Odoo only starts on the neutralized
+   The update hooks take a restore point of the copy, run `odoo neutralize` (no outgoing
+   mail, no scheduled actions, no calls to external services), then adapt the copy and
+   update the modules from the production version. Odoo only starts on the neutralized
    database. The next update, without the flag, does not neutralize again.
+
+The adapted copy:
+
+- `admin` (`base.user_admin`) gets the password `admin-user-password` of the target's
+  application Secret, which the update requires. Its login, and the other users with
+  their passwords, stay those of production.
+- With Mailpit, the server `neutralization - disable emails` that `odoo neutralize`
+  creates is deleted: the production servers are archived, so mail goes to Mailpit.
+  Without Mailpit, that server keeps blocking outgoing mail.
+- A module installed after the neutralization brings its scheduled actions active.
+
+### Copy the filestore volume
+
+With Longhorn and a backup target, a `VolumeSnapshotClass` of type `bak` stores the
+snapshot as a backup in remote storage, which a static `VolumeSnapshotContent` exposes
+to another namespace.
+
+1. Back the production volume up. The filestore can be copied hot: Odoo only adds files,
+   named after their content.
+
+   ```yaml
+   apiVersion: snapshot.storage.k8s.io/v1
+   kind: VolumeSnapshotClass
+   metadata:
+     name: longhorn-bak
+   driver: driver.longhorn.io
+   deletionPolicy: Delete
+   parameters:
+     type: bak
+   ---
+   apiVersion: snapshot.storage.k8s.io/v1
+   kind: VolumeSnapshot
+   metadata:
+     name: odoo-data-copy
+     namespace: odoo-prod
+   spec:
+     volumeSnapshotClassName: longhorn-bak
+     source:
+       persistentVolumeClaimName: odoo-odoo-data
+   ```
+
+   ```sh
+   kubectl -n $prod wait volumesnapshot/odoo-data-copy \
+     --for=jsonpath='{.status.readyToUse}'=true --timeout=30m
+   content=$(kubectl -n $prod get volumesnapshot odoo-data-copy \
+     -o jsonpath='{.status.boundVolumeSnapshotContentName}')
+   kubectl get volumesnapshotcontent $content -o jsonpath='{.status.snapshotHandle}'
+   kubectl -n $prod get volumesnapshot odoo-data-copy -o jsonpath='{.status.restoreSize}'
+   ```
+
+2. Restore it into a volume of the target namespace, from the handle
+   (`bak://<volume>/<backup>`) and at least the size printed above. `Retain`: only the
+   production `VolumeSnapshot` owns the backup.
+
+   ```yaml
+   apiVersion: snapshot.storage.k8s.io/v1
+   kind: VolumeSnapshotContent
+   metadata:
+     name: odoo-data-from-prod
+   spec:
+     driver: driver.longhorn.io
+     deletionPolicy: Retain
+     volumeSnapshotClassName: longhorn-bak
+     source:
+       snapshotHandle: bak://<volume>/<backup>
+     volumeSnapshotRef:
+       namespace: odoo-staging
+       name: odoo-data-from-prod
+   ---
+   apiVersion: snapshot.storage.k8s.io/v1
+   kind: VolumeSnapshot
+   metadata:
+     name: odoo-data-from-prod
+     namespace: odoo-staging
+   spec:
+     volumeSnapshotClassName: longhorn-bak
+     source:
+       volumeSnapshotContentName: odoo-data-from-prod
+   ---
+   apiVersion: v1
+   kind: PersistentVolumeClaim
+   metadata:
+     name: odoo-data-from-prod
+     namespace: odoo-staging
+   spec:
+     storageClassName: longhorn
+     accessModes: [ReadWriteOnce]
+     resources: {requests: {storage: <size>}}
+     dataSource:
+       apiGroup: snapshot.storage.k8s.io
+       kind: VolumeSnapshot
+       name: odoo-data-from-prod
+   ```
+
+3. Once Odoo is stopped, copy the files with a Job that mounts both volumes, as the user
+   of the image (`podSecurityContext`), here for the database `odoo`. The old filestore
+   is kept aside to go back.
+
+   ```yaml
+   apiVersion: batch/v1
+   kind: Job
+   metadata:
+     name: odoo-data-copy
+     namespace: odoo-staging
+   spec:
+     backoffLimit: 0
+     template:
+       spec:
+         restartPolicy: Never
+         securityContext:
+           {runAsUser: 100, runAsGroup: 101, fsGroup: 101, runAsNonRoot: true}
+         containers:
+           - name: copy
+             image: busybox:1.37
+             command: [sh, -euc]
+             args:
+               - |
+                 if [ -d /dst/filestore/odoo ] && [ ! -d /dst/filestore/odoo.before-copy ]; then
+                   mv /dst/filestore/odoo /dst/filestore/odoo.before-copy
+                 fi
+                 mkdir -p /dst/filestore
+                 cp -a /src/filestore/odoo /dst/filestore/
+             volumeMounts:
+               - {name: src, mountPath: /src, readOnly: true}
+               - {name: dst, mountPath: /dst}
+         volumes:
+           - name: src
+             persistentVolumeClaim: {claimName: odoo-data-from-prod, readOnly: true}
+           - name: dst
+             persistentVolumeClaim: {claimName: odoo-odoo-data}
+   ```
+
+Once the copy is checked, delete the Job, the restored volume, its `VolumeSnapshot` and
+`VolumeSnapshotContent`, then the production `VolumeSnapshot`, which deletes the backup.

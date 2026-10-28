@@ -1,6 +1,6 @@
 {{- /*
 Job migrate: native commands of Odoo and click-odoo-contrib in successive
-containers (db-init, neutralize when asked, install, update). Hook of the chart:
+containers (db-init, neutralize and adapt when asked, install, update). Hook of the chart:
   - persistent instance, update: pre-upgrade, after stop-snapshot (Odoo stopped, restore
     point taken), before Helm applies the Deployments;
   - persistent instance, first installation, and ephemeral instance: post-install (and
@@ -57,6 +57,9 @@ spec:
           command: [sh, -euc]
           args:
             - |
+              {{- if .Values.neutralize }}
+              [ -n "${ODOO_INIT_ADMIN_PASSWORD:-}" ] || { echo "no admin-user-password in {{ include "odoo.appSecret" . }}: needed to neutralize" >&2; exit 1; }
+              {{- end }}
               deadline=$(($(date +%s) + 300))
               until psql -d postgres -tAc 'select 1' >/dev/null 2>&1; do
                 [ "$(date +%s)" -lt "$deadline" ] || { echo "database server unreachable" >&2; exit 1; }
@@ -97,6 +100,35 @@ spec:
           args: [odoo, neutralize, -d, {{ .Values.database.name | quote }}]
           env:
             {{- include "odoo.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.odoo.resources | nindent 12 }}
+          securityContext:
+            {{- include "odoo.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            {{- include "odoo.volumeMounts" . | nindent 12 }}
+        # The copy keeps the users of production: admin gets the password of this instance.
+        # With Mailpit, drop the dummy server of odoo neutralize so that mail reaches it.
+        - name: adapt
+          {{- include "odoo.imageFields" . | nindent 10 }}
+          command: [sh, -euc]
+          args:
+            - |
+              odoo shell -d {{ .Values.database.name | quote }} --no-http <<'EOF'
+              import os
+              env.ref("base.user_admin").password = os.environ["ODOO_INIT_ADMIN_PASSWORD"]
+              {{- if .Values.mailpit.enabled }}
+              env["ir.mail_server"].with_context(active_test=False).search(
+                  [("name", "=", "neutralization - disable emails"), ("smtp_host", "=", "invalid")]
+              ).unlink()
+              {{- end }}
+              env.cr.commit()
+              EOF
+          env:
+            {{- include "odoo.env" . | nindent 12 }}
+            # Checked by db-init, which reports a missing key
+            - name: ODOO_INIT_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ include "odoo.appSecret" . }}, key: admin-user-password, optional: true}
           resources:
             {{- toYaml .Values.odoo.resources | nindent 12 }}
           securityContext:
