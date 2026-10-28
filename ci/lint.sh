@@ -2,7 +2,8 @@
 # Static checks of the chart, without a cluster: helm lint and kubeconform with the
 # values of tests/values (installation and update), the generated odoo.conf compared with
 # an expected file, the hooks of each case, the account of the hooks, the filestore modes,
-# the user of the pods, and the guards (refused values, no destructive command in any render).
+# the user of the pods, the neutralized update, and the guards (refused values, no
+# destructive command in any render).
 # Requires helm 4 and kubeconform (KUBECONFORM to override the binary).
 # Usage: ci/lint.sh
 set -euo pipefail
@@ -64,6 +65,10 @@ for env in review staging preprod production; do
     fi
     render "$env" >"$work/$env.yaml"
     [ "$env" = review ] || render "$env" --is-upgrade >"$work/$env-upgrade.yaml"
+done
+# Update after a copy of production data: with Mailpit (staging), without (production)
+for env in staging production; do
+    render "$env" --is-upgrade --set neutralize=true >"$work/$env-neutralize.yaml"
 done
 if "$kubeconform" -strict -summary -kubernetes-version 1.34.0 \
     -schema-location default \
@@ -304,6 +309,36 @@ check "podAnnotations: added to the Odoo pods" has "$annotations" "^example.com/
 check "podAnnotations: the chart's annotations win" \
     equals "$(grep '^checksum/config:' <<<"$annotations")" \
     "$(grep '^checksum/config:' <<<"$(pod_metadata "$work/staging-upgrade.yaml" annotations)")"
+
+# 12. Neutralized update: admin password of this instance, mail to Mailpit when enabled
+migrate_steps() { # migrate_steps <render>: the containers of the Job migrate, in order
+    doc "$1" Job odoo-migrate | awk '/^      volumes:/ {exit} sub(/^        - name: /, "") {printf "%s ", $0}'
+}
+migrate_container() { # migrate_container <render> <container>: its lines
+    doc "$1" Job odoo-migrate | awk -v n="        - name: $2" '$0 == n {f = 1; print; next}
+        f && /^        - name:|^      [a-z]/ {exit} f {print}'
+}
+admin_password() { # admin_password <render>: adapt sets it from admin-user-password, then commits
+    local adapt
+    adapt="$(migrate_container "$1" adapt)"
+    has "$adapt" 'base.user_admin").password = os.environ' &&
+        has "$adapt" "key: admin-user-password" && has "$adapt" "env.cr.commit()"
+}
+check "neutralize: db-init, neutralize, adapt, install, update" \
+    equals "$(migrate_steps "$work/staging-neutralize.yaml")" "db-init neutralize adapt install update "
+check "no neutralize: neither neutralize nor adapt" \
+    equals "$(migrate_steps "$work/staging-upgrade.yaml")" "db-init install update "
+check "neutralize: db-init requires admin-user-password before any change" \
+    has "$(migrate_container "$work/staging-neutralize.yaml" db-init)" "needed to neutralize"
+check "no neutralize: db-init does not require admin-user-password on update" \
+    lacks "$(migrate_container "$work/staging-upgrade.yaml" db-init)" "needed to neutralize"
+for env in staging production; do
+    check "$env neutralize: admin password from admin-user-password" admin_password "$work/$env-neutralize.yaml"
+done
+check "neutralize with Mailpit: adapt drops the dummy mail server of odoo neutralize" \
+    has "$(migrate_container "$work/staging-neutralize.yaml" adapt)" '("smtp_host", "=", "invalid")'
+check "neutralize without Mailpit: the dummy mail server stays" \
+    lacks "$(migrate_container "$work/production-neutralize.yaml" adapt)" "invalid"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     printf '### Chart checks\n\n- failures: %s\n' "$failures" >>"$GITHUB_STEP_SUMMARY"
