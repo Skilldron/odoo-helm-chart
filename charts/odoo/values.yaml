@@ -79,7 +79,8 @@ odoo:
   # only). Rendered after the variables of the chart (ODOO_IMAGE_TAG: image.tag, when
   # set; the database; ODOO_ADMIN_PASSWD) and secrets.env: a value can reference them as
   # $(NAME), e.g. service.version=$(ODOO_IMAGE_TAG) in OTEL_RESOURCE_ATTRIBUTES (an
-  # unset one stays literal; $$(NAME) escapes).
+  # unset one stays literal; $$(NAME) escapes), but not another entry of odoo.env.
+  # A key cannot be removed by a later values file.
   # The variables that the chart sets, or whose options it imposes, are refused.
   env: {}
   # Filestore and sessions (/var/lib/odoo):
