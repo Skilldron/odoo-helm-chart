@@ -230,7 +230,7 @@ smtp_port = 1025
 {{- range $v.secrets.env }}{{ $envNames = append $envNames .name }}{{ end -}}
 {{- /* Set by the chart, or options it derives resources from (password variables are
 refused by name anyway) */ -}}
-{{- $chartEnv := list "ODOO_RC" "PGHOST" "PGPORT" "PGUSER" "PGDATABASE" "HOME" "ODOO_DATA_DIR" "ODOO_HTTP_INTERFACE" "ODOO_WORKERS" -}}
+{{- $chartEnv := list "ODOO_RC" "PGHOST" "PGPORT" "PGUSER" "PGDATABASE" "HOME" "ODOO_IMAGE_TAG" "ODOO_DATA_DIR" "ODOO_HTTP_INTERFACE" "ODOO_WORKERS" -}}
 {{- if $v.mailpit.enabled }}{{ $chartEnv = concat $chartEnv (list "ODOO_SMTP_SERVER" "ODOO_SMTP_PORT") }}{{ end -}}
 {{- range $name, $_ := $v.odoo.env -}}
 {{- if regexMatch "PASSW|SECRET|TOKEN" $name -}}
@@ -293,6 +293,10 @@ capabilities:
 {{- define "odoo.env" -}}
 - name: ODOO_RC
   value: /etc/odoo/odoo.conf
+{{- with .Values.image.tag }}
+- name: ODOO_IMAGE_TAG
+  value: {{ . | quote }}
+{{- end }}
 {{- if .Values.ephemeral }}
 - name: PGHOST
   value: {{ .Release.Name }}-postgres

@@ -76,8 +76,10 @@ odoo:
   # More environment variables of the Odoo containers and Jobs, in clear: {NAME: value},
   # strings only (quote numbers), merged across values files. No secret here: secrets go
   # in secrets.env (the names with PASSW, SECRET or TOKEN are refused, a safety net
-  # only). Rendered after the database variables, ODOO_ADMIN_PASSWD and secrets.env: a
-  # value can reference them as $(NAME) (an unset one stays literal; $$(NAME) escapes).
+  # only). Rendered after the variables of the chart (ODOO_IMAGE_TAG: image.tag, when
+  # set; the database; ODOO_ADMIN_PASSWD) and secrets.env: a value can reference them as
+  # $(NAME), e.g. service.version=$(ODOO_IMAGE_TAG) in OTEL_RESOURCE_ATTRIBUTES (an
+  # unset one stays literal; $$(NAME) escapes).
   # The variables that the chart sets, or whose options it imposes, are refused.
   env: {}
   # Filestore and sessions (/var/lib/odoo):

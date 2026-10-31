@@ -208,6 +208,19 @@ env_after_secrets() { # odoo.env after secrets.env, so $(OTLP_TOKEN) is expanded
 check "odoo.env rendered after secrets.env" env_after_secrets
 check "optional secrets.env Secret" \
     has "$(doc "$work/staging.yaml" Deployment odoo)" "key: token, optional: true"
+# shellcheck disable=SC2016 # $(ODOO_IMAGE_TAG) is expanded by Kubernetes
+image_tag_env() { # image.tag as ODOO_IMAGE_TAG, before odoo.env (Kubernetes expands it)
+    local deployment
+    deployment="$(render staging --set image.tag=1.2.3 \
+        --set-string 'odoo.env.OTEL_RESOURCE_ATTRIBUTES=service.version=$(ODOO_IMAGE_TAG)' |
+        doc /dev/stdin Deployment odoo)"
+    has "$deployment" 'value: "1.2.3"' &&
+        [ "$(grep -n 'name: ODOO_IMAGE_TAG' <<<"$deployment" | head -1 | cut -d: -f1)" -lt \
+            "$(grep -n 'name: OTEL_RESOURCE_ATTRIBUTES' <<<"$deployment" | head -1 | cut -d: -f1)" ]
+}
+check "image tag as ODOO_IMAGE_TAG, before odoo.env" image_tag_env
+check "no ODOO_IMAGE_TAG without image tag" lacks "$(cat "$work/staging.yaml")" ODOO_IMAGE_TAG
+refused "odoo.env ODOO_IMAGE_TAG set by the chart" staging --set-string odoo.env.ODOO_IMAGE_TAG=x
 check "odoo.env in the migrate Job" \
     has "$(doc "$work/staging.yaml" Job odoo-migrate)" "name: OTEL_EXPORTER_OTLP_ENDPOINT"
 check "Odoo waits for its database (init container wait-db)" \
