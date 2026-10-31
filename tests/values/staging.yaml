@@ -9,9 +9,15 @@ odoo:
       max_cron_threads: 1
   persistence:
     size: 5Gi
+  # OpenTelemetry of a server-wide module: the header references the token of secrets.env
+  env:
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-gateway.observability.svc:4318
+    OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer%20$(OTLP_TOKEN)
 
 secrets:
   existingSecret: odoo-app
+  env:
+    - {name: OTLP_TOKEN, secret: otlp, key: token, optional: true}
 
 database:
   external:
