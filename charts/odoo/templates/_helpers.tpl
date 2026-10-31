@@ -228,6 +228,19 @@ smtp_port = 1025
 {{- end -}}
 {{- $envNames := list -}}
 {{- range $v.secrets.env }}{{ $envNames = append $envNames .name }}{{ end -}}
+{{- /* Set by the chart, or options it derives resources from (password variables are
+refused by name anyway) */ -}}
+{{- $chartEnv := list "ODOO_RC" "PGHOST" "PGPORT" "PGUSER" "PGDATABASE" "HOME" "ODOO_IMAGE_TAG" "ODOO_DATA_DIR" "ODOO_HTTP_INTERFACE" "ODOO_WORKERS" -}}
+{{- if $v.mailpit.enabled }}{{ $chartEnv = concat $chartEnv (list "ODOO_SMTP_SERVER" "ODOO_SMTP_PORT") }}{{ end -}}
+{{- range $name, $_ := $v.odoo.env -}}
+{{- if regexMatch "PASSW|SECRET|TOKEN" $name -}}
+{{- fail (printf "odoo.env.%s: secrets go in secrets.env, not in odoo.env" $name) -}}
+{{- end -}}
+{{- if or (has $name $chartEnv) (has $name $envNames) -}}
+{{- fail (printf "odoo.env.%s is set by the chart or by secrets.env" $name) -}}
+{{- end -}}
+{{- $envNames = append $envNames $name -}}
+{{- end -}}
 {{- range $section, $opts := $v.odoo.config -}}
 {{- if not (regexMatch "^[a-z0-9_.]+$" $section) -}}
 {{- fail (printf "odoo.config: invalid section name %q" $section) -}}
@@ -247,7 +260,7 @@ smtp_port = 1025
 {{- end -}}
 {{- $envName := ternary (printf "ODOO_%s" ($name | upper)) (printf "ODOO_%s_%s" ($section | upper) ($name | upper)) (eq $section "options") -}}
 {{- if has $envName $envNames -}}
-{{- fail (printf "odoo.config.%s.%s is also set by secrets.env (%s)" $section $name $envName) -}}
+{{- fail (printf "odoo.config.%s.%s is also set by secrets.env or odoo.env (%s)" $section $name $envName) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -280,6 +293,10 @@ capabilities:
 {{- define "odoo.env" -}}
 - name: ODOO_RC
   value: /etc/odoo/odoo.conf
+{{- with .Values.image.tag }}
+- name: ODOO_IMAGE_TAG
+  value: {{ . | quote }}
+{{- end }}
 {{- if .Values.ephemeral }}
 - name: PGHOST
   value: {{ .Release.Name }}-postgres
@@ -314,7 +331,11 @@ capabilities:
 {{- range .Values.secrets.env }}
 - name: {{ .name }}
   valueFrom:
-    secretKeyRef: {name: {{ .secret }}, key: {{ .key }}}
+    secretKeyRef: {name: {{ .secret }}, key: {{ .key }}{{ if .optional }}, optional: true{{ end }}}
+{{- end }}
+{{- range $name, $value := .Values.odoo.env }}
+- name: {{ $name }}
+  value: {{ $value | quote }}
 {{- end }}
 {{- end }}
 

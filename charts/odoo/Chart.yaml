@@ -4,7 +4,7 @@ description:
   Odoo 20 on Kubernetes, disposable review apps or persistent instances on
   CloudNativePG, with safe updates (stop, restore point, module update, validation)
 type: application
-version: 1.3.0
+version: 1.4.0
 appVersion: "20.0"
 home: https://github.com/Skilldron/odoo-helm-chart
 sources:

@@ -120,6 +120,16 @@ refused "option imposed by the chart" staging --set odoo.config.options.data_dir
 refused "SMTP overridden while Mailpit is enabled" review --set odoo.config.options.smtp_server=x
 refused "option also set by secrets.env" staging --set odoo.config.queue_job.http_auth_user=u \
     --set-json 'secrets.env=[{"name":"ODOO_QUEUE_JOB_HTTP_AUTH_USER","secret":"s","key":"k"}]'
+refused "secret in odoo.env" staging --set odoo.env.API_TOKEN=x
+refused "odoo.env variable set by the chart" staging --set odoo.env.PGHOST=x
+refused "odoo.env variable also in secrets.env" staging --set odoo.env.API_URL=x \
+    --set-json 'secrets.env=[{"name":"API_URL","secret":"s","key":"k"}]'
+refused "option also set by odoo.env" staging --set odoo.config.options.log_level=info \
+    --set-string odoo.env.ODOO_LOG_LEVEL=debug
+refused "odoo.env value that is not a string" staging --set odoo.env.API_RETRIES=2
+refused "odoo.env option imposed by the chart" staging --set odoo.env.ODOO_DATA_DIR=/x
+refused "odoo.env SMTP while Mailpit is enabled" staging --set odoo.env.ODOO_SMTP_SERVER=x
+refused "odoo.env name that is not a variable name" staging --set-string odoo.env.otel=x
 refused "digest that is not sha256:<64 hex>" staging --set image.digest=latest
 refused "image without tag nor digest" staging --set image.digest=
 refused "invalid image tag" staging --set image.digest= --set image.tag=-1.0
@@ -187,6 +197,32 @@ check "first installation: migrate on the node of the Odoo pod (RWO volume)" \
     has "$(doc "$work/staging.yaml" Job odoo-migrate)" podAffinity
 check "update: migrate without affinity (Odoo stopped)" \
     lacks "$(doc "$work/staging-upgrade.yaml" Job odoo-migrate)" podAffinity
+# shellcheck disable=SC2016 # $(OTLP_TOKEN) is expanded by Kubernetes
+env_after_secrets() { # odoo.env after secrets.env, so $(OTLP_TOKEN) is expanded
+    local deployment
+    deployment="$(doc "$work/staging.yaml" Deployment odoo)"
+    has "$deployment" 'value: "Authorization=Bearer%20$(OTLP_TOKEN)"' &&
+        [ "$(grep -n 'name: OTLP_TOKEN' <<<"$deployment" | head -1 | cut -d: -f1)" -lt \
+            "$(grep -n 'name: OTEL_EXPORTER_OTLP_HEADERS' <<<"$deployment" | head -1 | cut -d: -f1)" ]
+}
+check "odoo.env rendered after secrets.env" env_after_secrets
+check "optional secrets.env Secret" \
+    has "$(doc "$work/staging.yaml" Deployment odoo)" "key: token, optional: true"
+# shellcheck disable=SC2016 # $(ODOO_IMAGE_TAG) is expanded by Kubernetes
+image_tag_env() { # image.tag as ODOO_IMAGE_TAG, before odoo.env (Kubernetes expands it)
+    local deployment
+    deployment="$(render staging --set image.tag=1.2.3 \
+        --set-string 'odoo.env.OTEL_RESOURCE_ATTRIBUTES=service.version=$(ODOO_IMAGE_TAG)' |
+        doc /dev/stdin Deployment odoo)"
+    has "$deployment" 'value: "1.2.3"' &&
+        [ "$(grep -n 'name: ODOO_IMAGE_TAG' <<<"$deployment" | head -1 | cut -d: -f1)" -lt \
+            "$(grep -n 'name: OTEL_RESOURCE_ATTRIBUTES' <<<"$deployment" | head -1 | cut -d: -f1)" ]
+}
+check "image tag as ODOO_IMAGE_TAG, before odoo.env" image_tag_env
+check "no ODOO_IMAGE_TAG without image tag" lacks "$(cat "$work/staging.yaml")" ODOO_IMAGE_TAG
+refused "odoo.env ODOO_IMAGE_TAG set by the chart" staging --set-string odoo.env.ODOO_IMAGE_TAG=x
+check "odoo.env in the migrate Job" \
+    has "$(doc "$work/staging.yaml" Job odoo-migrate)" "name: OTEL_EXPORTER_OTLP_ENDPOINT"
 check "Odoo waits for its database (init container wait-db)" \
     has "$(doc "$work/staging.yaml" Deployment odoo)" "module_auto_update.installed_checksums"
 

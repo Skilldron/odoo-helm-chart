@@ -84,6 +84,11 @@
           "propertyNames": {"pattern": "^[a-z0-9_.]+$"},
           "additionalProperties": {"$ref": "#/definitions/iniSection"}
         },
+        "env": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[A-Z_][A-Z0-9_]*$"},
+          "additionalProperties": {"type": "string"}
+        },
         "persistence": {
           "type": "object",
           "properties": {
@@ -119,7 +124,8 @@
             "properties": {
               "name": {"type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$"},
               "secret": {"type": "string", "minLength": 1},
-              "key": {"type": "string", "minLength": 1}
+              "key": {"type": "string", "minLength": 1},
+              "optional": {"type": "boolean"}
             }
           }
         }
